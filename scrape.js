@@ -1,14 +1,12 @@
-puppeteer = require("puppeteer"),
-d3 = require("d3"),
+puppeteer = require("puppeteer");
 fs = require("fs");
 
-async function scrape() {
-  console.log("scrape()");
-  browser = await puppeteer.launch({headless: true}),
-  page = await browser.newPage();
-  console.log("establish datasets");
+async function scrape(state) {
+  console.log("establish datasets & browser");
   states = ["Queensland", "New South Wales", "Victoria", "South Australia", "Western Australia", "Tasmania", "Northern Territory", "Australian Capital Territory"];
   state = 0;
+  browser = await puppeteer.launch({headless: true}),
+  page = await browser.newPage();
   insolvencyData = [];
   return new Promise(async function(resolve, reject) {
     try {
@@ -24,37 +22,33 @@ async function scrape() {
         await page.waitFor(2000);
         console.log("click search");
         await page.click(".button.float-right");
-        await page.waitFor(2000);
-        console.log("evaluate page " + page);
-        // page = 1;
-        // pagesLeft = true;
-        // while (pagesLeft) {
-        let data = await page.evaluate(function() {
-          let entries = document.querySelectorAll(".article-block");
-          let response = { data: [], options: [] };
-          entries.forEach(function(d) {
-            let datum = {};
-            datum.date = d.querySelector(".published-date").innerText.replace("Published: ", "");
-            datum.business = d.querySelectorAll("p:nth-child(3)")[0].innerText;
-            datum.acn = d.querySelector("dd").innerText;
-            datum.status = d.querySelectorAll("dd:last-child")[0].innerText;
-            datum.type = d.querySelector("h3").innerText;
-            response.data = response.data.concat(datum);
-          });
-          document.querySelectorAll(".NoticeTablePager tr td")
-            .forEach(function(d) { isNaN(d.innerText) ? response.options.push(d.innerText) : response.options.push(+d.innerText); });
-          return response;
-        });
-        data.data
-          .forEach(function(d) {
-            d.state = states[state];
-          });
-        console.log(data.data);
-        insolvencyData = insolvencyData.concat(data.data);
-        console.log(data.options);
-        // pagesLeft = false;
-        // }
+        pageNo = 1;
+        pagesLeft = true;
+        while (pagesLeft) {
+          await page.waitFor(2000);
+          console.log("evaluate page " + pageNo);
+          let pageData = await page.evaluate(scrapeEntries);
+          pageData.data
+            .forEach(function(d) {
+              d.state = states[state];
+            });
+          // console.log(pageData.data);
+          insolvencyData = insolvencyData.concat(pageData.data);
+          pageNo += 1;
+          if (pageData.options.includes(pageNo)) {
+            let clickTarget = pageData.options.indexOf(pageNo) + 1;
+            await page.click(".NoticeTablePager tr td:nth-child(" + clickTarget + ")");
+          } else if (pageData.options[pageData.options.length - 2] == "...") {
+            let clickTarget = pageData.options.length - 1;
+            await page.click(".NoticeTablePager tr td:nth-child(" + clickTarget + ")");
+          } else {
+            pagesLeft = false;
+          }
+        }
         state += 1;
+        fs.writeFile("insolvencyData.json", JSON.stringify(insolvencyData), function(data) {
+          console.log("insolvencyData.json updated");
+        });
       }
       browser.close();
       return resolve(insolvencyData);
@@ -62,6 +56,23 @@ async function scrape() {
       return reject(error);
     }
   });
+}
+
+function scrapeEntries() {
+  let entries = document.querySelectorAll(".article-block");
+  let pageData = { data: [], options: [] };
+  entries.forEach(function(d) {
+    let datum = {};
+    datum.date = d.querySelector(".published-date").innerText.replace("Published: ", "");
+    datum.business = d.querySelectorAll("p:nth-child(3)")[0].innerText;
+    datum.acn = d.querySelector("dd").innerText;
+    datum.status = d.querySelectorAll("dd:last-child")[0].innerText;
+    datum.type = d.querySelector("h3").innerText;
+    pageData.data = pageData.data.concat(datum);
+  });
+  document.querySelectorAll(".NoticeTablePager tr td")
+    .forEach(function(d) { isNaN(d.innerText) ? pageData.options.push(d.innerText) : pageData.options.push(+d.innerText); });
+  return pageData;
 }
 
 scrape()
